@@ -574,7 +574,7 @@ const ScraperUI = () => {
                   Universal Website Scraper
                 </h1>
                 <p className={`text-sm ${darkMode ? 'text-slate-400' : 'text-slate-600'} mt-1`}>
-                  Phase 4 & 5: Interactive Scraping & Enhanced UI
+                  Advanced web scraping with intelligent fallback
                 </p>
               </div>
             </div>
@@ -1290,7 +1290,7 @@ const ScraperUI = () => {
           <p className={`mt-2 text-sm ${
             darkMode ? 'text-slate-500' : 'text-slate-500'
           }`}>
-            Anshuman Kumar Singh • Phase 4 & 5: Interactive Scraping & Enhanced UI
+            Anshuman Kumar Singh • Advanced Interactive Scraping
           </p>
           <div className="flex items-center justify-center gap-4 mt-4">
             <span className={`text-xs px-3 py-1 rounded-full ${
@@ -1312,7 +1312,7 @@ const ScraperUI = () => {
                 ? 'bg-green-500/10 text-green-400 border border-green-500/20' 
                 : 'bg-green-100 text-green-700 border border-green-300'
             }`}>
-              Phase 4 & 5 Complete
+              Complete
             </span>
           </div>
         </div>
