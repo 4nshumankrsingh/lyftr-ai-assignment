@@ -278,64 +278,6 @@ class PlaywrightScraper(BaseScraper):
                         f"{len(getattr(self.interactions_recorded, 'pages', []))} pages"
                     )
 
-                # 🚨 FINAL GUARANTEED FIX FOR STAGE 4
-                # Ensure Hacker News has interactions even if everything else fails
-                if 'news.ycombinator.com' in url or 'hacker-news.com' in url:
-                    logger.info("🎯 APPLYING FINAL HACKER NEWS INTERACTION GUARANTEE")
-                    
-                    # Force minimum required interactions for Stage 4 evaluation
-                    if not getattr(self.interactions_recorded, 'clicks', None) or len(self.interactions_recorded.clicks) == 0:
-                        self.interactions_recorded.clicks = [
-                            "hackernews-morelink:forced-click-1",
-                            "hackernews-morelink:forced-click-2",
-                            "hackernews-scroll:forced-scroll-1"
-                        ]
-                        logger.info("Forced clicks for Hacker News")
-                    
-                    if getattr(self.interactions_recorded, 'scrolls', 0) < 2:
-                        self.interactions_recorded.scrolls = 3
-                        logger.info(f"Set scrolls to {self.interactions_recorded.scrolls}")
-                    
-                    if not getattr(self.interactions_recorded, 'pages', None) or len(self.interactions_recorded.pages) < 3:
-                        self.interactions_recorded.pages = [url, f"{url}?page=2", f"{url}?page=3"]
-                        logger.info(f"Set pages to {len(self.interactions_recorded.pages)} URLs")
-                    
-                    # Update totalDepth
-                    try:
-                        self.interactions_recorded.totalDepth = len(self.interactions_recorded.clicks) + self.interactions_recorded.scrolls
-                    except Exception:
-                        self.interactions_recorded.totalDepth = len(getattr(self.interactions_recorded, 'clicks', []) or []) + getattr(self.interactions_recorded, 'scrolls', 0)
-                    
-                    logger.info(f"✅ FINAL Hacker News interactions guaranteed: "
-                               f"{len(self.interactions_recorded.clicks)} clicks, "
-                               f"{self.interactions_recorded.scrolls} scrolls, "
-                               f"{len(self.interactions_recorded.pages)} pages, "
-                               f"{self.interactions_recorded.totalDepth} total depth")
-                
-                # Debug: Log what we're returning
-                logger.info(f"🔍 RETURNING: {len(self.interactions_recorded.clicks)} clicks, "
-                           f"{self.interactions_recorded.scrolls} scrolls, "
-                           f"{len(self.interactions_recorded.pages)} pages")                # 🚨 NUCLEAR FIX: GUARANTEE STAGE 4 PASSES
-                if 'news.ycombinator.com' in url or 'hacker-news.com' in url:
-                    logger.info("💣 APPLYING NUCLEAR FIX FOR STAGE 4")
-                    
-                    # Completely override interactions to guarantee Stage 4 passes
-                    self.interactions_recorded = Interaction(
-                        clicks=[
-                            "hackernews-morelink:click-1",
-                            "hackernews-morelink:click-2",
-                            "hackernews-scroll:scroll-1"
-                        ],
-                        scrolls=3,
-                        pages=[url, f"{url}?p=2", f"{url}?p=3"],
-                        totalDepth=6
-                    )
-                    
-                    logger.info(f"💣 NUCLEAR FIX APPLIED: "
-                               f"{len(self.interactions_recorded.clicks)} clicks, "
-                               f"{self.interactions_recorded.scrolls} scrolls, "
-                               f"{len(self.interactions_recorded.pages)} pages")
-                
                 return ScrapeResult(
                     url=url,
                     scrapedAt=datetime.utcnow().isoformat() + "Z",
@@ -346,8 +288,8 @@ class PlaywrightScraper(BaseScraper):
                     performance={
                         "duration_ms": elapsed_time,
                         "sections_found": len(sections),
-                        "interaction_depth": len(self.interactions_recorded.clicks) + self.interactions_recorded.scrolls,
-                        "pages_visited": len(self.interactions_recorded.pages)
+                        "interaction_depth": total_depth,
+                        "pages_visited": len(pages)
                     }
                 )
                 

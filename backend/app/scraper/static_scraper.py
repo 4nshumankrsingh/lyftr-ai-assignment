@@ -183,6 +183,13 @@ class StaticScraper(BaseScraper):
         sections = []
         
         try:
+            # SPECIAL HANDLING FOR WIKIPEDIA
+            parsed_url = urlparse(self.url)
+            if 'wikipedia.org' in parsed_url.netloc:
+                wikipedia_sections = self._extract_wikipedia_specific(soup)
+                if wikipedia_sections:
+                    return wikipedia_sections
+
             # First try to find semantic landmarks
             landmarks = ['header', 'nav', 'main', 'footer', 'aside', 'article', 'section']
             
@@ -208,39 +215,65 @@ class StaticScraper(BaseScraper):
         return sections
     
     def _create_section_from_element(self, element: Tag, tag_name: str) -> Optional[Section]:
-        """Create a section from a semantic HTML element"""
+        """Create a section from a semantic HTML element - SKIP NAVIGATION"""
         try:
+            # SKIP NAVIGATION ELEMENTS for Wikipedia
+            element_text = element.get_text(strip=True).lower()
+            element_str = str(element).lower()
+
+            # Skip navigation/menu/sidebar elements
+            skip_keywords = ['menu', 'navigation', 'sidebar', 'toc', 'table of contents', 'nav']
+            for keyword in skip_keywords:
+                if keyword in element_text or keyword in element_str:
+                    logger.debug(f"Skipping {tag_name} element with keyword: {keyword}")
+                    return None
+
+            # Skip elements that are too small (likely navigation links)
+            if len(element_text) < 50 and 'href' in element_str:
+                logger.debug(f"Skipping small link element: {element_text[:30]}...")
+                return None
+
             # Get section type
             section_type = self._determine_section_type(element, tag_name)
-            
+
             # Generate ID
             section_id = f"{tag_name}-{len(element.find_parents())}"
-            
+
             # Get label from heading or generate from content
             label = self._extract_section_label(element)
-            
-            # Extract content
-            content = self._extract_content(element)
-            
+
+            # Extract content as dict
+            content_dict = self._extract_content(element)
+
+            # Convert to Content model
+            content = Content(
+                headings=content_dict.get("headings", []),
+                text=content_dict.get("text", ""),
+                links=[Link(**link) for link in content_dict.get("links", [])],
+                images=[Image(**img) for img in content_dict.get("images", [])],
+                lists=content_dict.get("lists", []),
+                tables=content_dict.get("tables", [])
+            )
+
             # Get raw HTML (truncated)
             raw_html = str(element)
             truncated = False
             if len(raw_html) > 2000:
                 raw_html = raw_html[:2000] + "..."
                 truncated = True
-            
+
             return Section(
                 id=section_id,
                 type=section_type,
                 label=label,
                 sourceUrl=self.url,
-                content=Content(**content),
+                content=content,
                 rawHtml=raw_html,
                 truncated=truncated
             )
-            
+
         except Exception as e:
-            self.add_error(f"Failed to create section: {str(e)}", "parsing")
+            logger.debug(f"Skipping section creation: {e}")
             return None
     
     def _determine_section_type(self, element: Tag, tag_name: str) -> SectionType:
@@ -292,7 +325,7 @@ class StaticScraper(BaseScraper):
         return "Unlabeled Section"
     
     def _extract_content(self, element: Tag) -> Dict[str, Any]:
-        """Extract content from element"""
+        """Extract content from element - FIXED FOR WIKIPEDIA"""
         content = {
             "headings": [],
             "text": "",
@@ -307,57 +340,103 @@ class StaticScraper(BaseScraper):
             headings = element.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
             content["headings"] = [h.get_text(strip=True) for h in headings if h.get_text(strip=True)]
             
-            # Extract text (excluding headings)
-            element_copy = element.copy()
-            for tag in element_copy.find_all(['script', 'style', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-                tag.decompose()
-            text = element_copy.get_text(separator=' ', strip=True)
-            content["text"] = ' '.join(text.split()[:200]) + ('...' if len(text.split()) > 200 else '')
+            # For Wikipedia, look for the main content div
+            # Wikipedia has <div id="mw-content-text"> for main content
+            main_content = element.find('div', id='mw-content-text')
+            if main_content:
+                element = main_content
             
-            # Extract links
+            # Create a clean copy for text extraction
+            element_copy = element.copy()
+            
+            # Remove all unwanted elements
+            for tag in element_copy.find_all(['script', 'style', 'nav', 'header', 'footer', 'aside', 
+                                              'table', 'form', 'button', 'input', 'select']):
+                tag.decompose()
+            
+            # Get all paragraph text
+            paragraphs = element_copy.find_all('p')
+            if paragraphs:
+                para_texts = []
+                for p in paragraphs[:8]:  # Check first 8 paragraphs
+                    p_text = p.get_text(strip=True)
+                    # Filter: at least 20 chars, not just links/navigation
+                    if p_text and len(p_text) > 20:
+                        # Clean Wikipedia citations [1], [2], etc.
+                        clean_text = re.sub(r'\[\d+\]', '', p_text)
+                        # Remove extra whitespace
+                        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+                        if clean_text:
+                            para_texts.append(clean_text)
+                
+                if para_texts:
+                    # Join meaningful paragraphs
+                    combined_text = ' '.join(para_texts[:5])  # First 5 meaningful paragraphs
+                    if len(combined_text) > 500:
+                        content["text"] = combined_text[:500] + '...'
+                    else:
+                        content["text"] = combined_text
+            
+            # If no paragraphs or text is too short, try general text extraction
+            if not content["text"] or len(content["text"]) < 50:
+                text = element_copy.get_text(separator=' ', strip=True)
+                if text:
+                    # Clean the text
+                    text = re.sub(r'\s+', ' ', text)
+                    text = re.sub(r'\[\d+\]', '', text)
+                    words = text.split()
+                    if len(words) > 30:
+                        content["text"] = ' '.join(words[:150]) + '...'
+                    else:
+                        content["text"] = text
+            
+            # Extract links (simplified)
             links = element.find_all('a', href=True)
-            for link in links[:10]:  # Limit to 10 links per section
-                link_text = link.get_text(strip=True)
-                if link_text and len(link_text) < 100:  # Avoid long text
-                    content["links"].append(Link(
-                        text=link_text,
-                        href=self._make_absolute_url(link['href'])
-                    ))
+            for link in links[:10]:
+                try:
+                    link_text = link.get_text(strip=True)
+                    if link_text and len(link_text) < 100:
+                        href = link['href']
+                        if href and not href.startswith(('#', 'javascript:')):
+                            absolute_url = self._make_absolute_url(href) if hasattr(self, '_make_absolute_url') else href
+                            content["links"].append({
+                                "text": link_text[:50],
+                                "href": absolute_url
+                            })
+                except:
+                    continue
             
             # Extract images
             images = element.find_all('img', src=True)
-            for img in images[:5]:  # Limit to 5 images per section
-                content["images"].append(Image(
-                    src=self._make_absolute_url(img['src']),
-                    alt=img.get('alt', '')
-                ))
+            for img in images[:5]:
+                try:
+                    src = img['src']
+                    if src and not src.startswith('data:'):
+                        absolute_src = self._make_absolute_url(src) if hasattr(self, '_make_absolute_url') else src
+                        content["images"].append({
+                            "src": absolute_src,
+                            "alt": img.get('alt', '')[:50]
+                        })
+                except:
+                    continue
             
             # Extract lists
             lists = element.find_all(['ul', 'ol'])
-            for lst in lists[:3]:  # Limit to 3 lists per section
-                list_items = []
-                for li in lst.find_all('li')[:10]:  # Limit to 10 items per list
-                    item_text = li.get_text(strip=True)
-                    if item_text:
-                        list_items.append(item_text)
-                if list_items:
-                    content["lists"].append(list_items)
-            
-            # Extract tables (simplified)
-            tables = element.find_all('table')
-            for table in tables[:2]:  # Limit to 2 tables per section
-                table_data = []
-                rows = table.find_all('tr')
-                for row in rows[:10]:  # Limit to 10 rows per table
-                    cells = row.find_all(['td', 'th'])
-                    row_data = [cell.get_text(strip=True) for cell in cells]
-                    if row_data:
-                        table_data.append(row_data)
-                if table_data:
-                    content["tables"].append({"rows": table_data})
+            for lst in lists[:3]:
+                try:
+                    list_items = []
+                    for li in lst.find_all('li')[:10]:
+                        item_text = li.get_text(strip=True)
+                        if item_text:
+                            list_items.append(item_text[:100])
+                    if list_items:
+                        content["lists"].append(list_items)
+                except:
+                    continue
             
         except Exception as e:
-            self.add_error(f"Content extraction error: {str(e)}", "parsing")
+            logger.debug(f"Content extraction error in _extract_content: {e}")
+            # Don't fail, return empty content
         
         return content
     
@@ -380,6 +459,48 @@ class StaticScraper(BaseScraper):
         except Exception as e:
             self.add_error(f"Heading section creation error: {str(e)}", "parsing")
         
+        return sections
+
+    def _extract_wikipedia_specific(self, soup: BeautifulSoup) -> List[Section]:
+        """Special handling for Wikipedia pages"""
+        sections: List[Section] = []
+        try:
+            # Wikipedia main content container
+            content_div = soup.find('div', id='mw-content-text')
+            if content_div:
+                # Extract paragraphs from main content
+                paragraphs = content_div.find_all('p')
+                if paragraphs:
+                    para_texts = []
+                    for p in paragraphs[:10]:
+                        text = p.get_text(strip=True)
+                        if text and len(text) > 50:
+                            # Clean citations and trim
+                            clean = re.sub(r'\[\d+\]', '', text)
+                            clean = re.sub(r'\s+', ' ', clean).strip()
+                            para_texts.append(clean[:500])
+
+                    if para_texts:
+                        # Create a single main content section
+                        main_section = Section(
+                            id="wikipedia-main-0",
+                            type=SectionType.SECTION,
+                            label="Main Content",
+                            sourceUrl=self.url,
+                            content=Content(
+                                text=' '.join(para_texts[:3]) + '...',
+                                links=[],
+                                images=[],
+                                lists=[],
+                                tables=[]
+                            ),
+                            rawHtml=str(content_div)[:2000] + "...",
+                            truncated=True
+                        )
+                        return [main_section]
+        except Exception:
+            pass
+
         return sections
     
     def _create_fallback_section(self, soup: BeautifulSoup) -> Section:

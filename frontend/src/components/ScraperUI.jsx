@@ -551,10 +551,10 @@ const ScraperUI = () => {
       darkMode 
         ? 'bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900' 
         : 'bg-gradient-to-br from-slate-50 via-blue-50 to-slate-50'
-    } p-4 md:p-8 overflow-hidden w-full`}>
-      <div className="max-w-7xl mx-auto w-full overflow-hidden">
+    } p-4 md:p-8 w-full`}>
+      <div className="max-w-7xl mx-auto w-full">
         {/* Header */}
-        <div className="mb-8 text-center overflow-hidden">
+        <div className="mb-8 text-center">
           <div className="flex flex-col md:flex-row items-center justify-between mb-6 gap-4">
             <div className="flex items-center gap-4">
               <div className="relative flex-shrink-0">
@@ -936,30 +936,6 @@ const ScraperUI = () => {
                       className="bg-gradient-to-r from-blue-500 via-cyan-500 to-blue-500 h-3 rounded-full animate-pulse"
                       style={{ width: `${loadingProgress}%` }}
                     ></div>
-                  </div>
-                  
-                  {/* Loading Steps */}
-                  <div className="grid grid-cols-3 gap-3">
-                    {['Static', 'JS', 'Interactions'].map((step, i) => (
-                      <div key={i} className={`p-3 rounded-xl border ${
-                        loadingProgress > (i * 33) 
-                          ? 'border-blue-500/30 bg-blue-500/10' 
-                          : (darkMode ? 'border-slate-700/50 bg-slate-800/30' : 'border-slate-300/50 bg-slate-100')
-                      }`}>
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center mx-auto mb-2 ${
-                          loadingProgress > (i * 33) 
-                            ? 'bg-blue-500/20 text-blue-400' 
-                            : (darkMode ? 'bg-slate-700 text-slate-500' : 'bg-slate-300 text-slate-400')
-                        }`}>
-                          {loadingProgress > (i * 33) ? '✓' : i+1}
-                        </div>
-                        <p className={`text-xs ${
-                          loadingProgress > (i * 33) 
-                            ? 'text-blue-300' 
-                            : (darkMode ? 'text-slate-500' : 'text-slate-600')
-                        }`}>{step}</p>
-                      </div>
-                    ))}
                   </div>
                 </div>
               </div>

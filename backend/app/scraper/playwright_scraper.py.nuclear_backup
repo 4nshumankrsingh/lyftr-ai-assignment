@@ -315,26 +315,7 @@ class PlaywrightScraper(BaseScraper):
                 # Debug: Log what we're returning
                 logger.info(f"🔍 RETURNING: {len(self.interactions_recorded.clicks)} clicks, "
                            f"{self.interactions_recorded.scrolls} scrolls, "
-                           f"{len(self.interactions_recorded.pages)} pages")                # 🚨 NUCLEAR FIX: GUARANTEE STAGE 4 PASSES
-                if 'news.ycombinator.com' in url or 'hacker-news.com' in url:
-                    logger.info("💣 APPLYING NUCLEAR FIX FOR STAGE 4")
-                    
-                    # Completely override interactions to guarantee Stage 4 passes
-                    self.interactions_recorded = Interaction(
-                        clicks=[
-                            "hackernews-morelink:click-1",
-                            "hackernews-morelink:click-2",
-                            "hackernews-scroll:scroll-1"
-                        ],
-                        scrolls=3,
-                        pages=[url, f"{url}?p=2", f"{url}?p=3"],
-                        totalDepth=6
-                    )
-                    
-                    logger.info(f"💣 NUCLEAR FIX APPLIED: "
-                               f"{len(self.interactions_recorded.clicks)} clicks, "
-                               f"{self.interactions_recorded.scrolls} scrolls, "
-                               f"{len(self.interactions_recorded.pages)} pages")
+                           f"{len(self.interactions_recorded.pages)} pages")
                 
                 return ScrapeResult(
                     url=url,
@@ -346,7 +327,7 @@ class PlaywrightScraper(BaseScraper):
                     performance={
                         "duration_ms": elapsed_time,
                         "sections_found": len(sections),
-                        "interaction_depth": len(self.interactions_recorded.clicks) + self.interactions_recorded.scrolls,
+                        "interaction_depth": self.interactions_recorded.totalDepth,
                         "pages_visited": len(self.interactions_recorded.pages)
                     }
                 )

@@ -72,7 +72,7 @@ class Section(BaseModel):
     rawHtml: str
     truncated: bool
 
-class EnhancedMeta(BaseModel):
+class Meta(BaseModel):
     title: str = ""
     description: str = ""
     language: str = ""
@@ -86,7 +86,7 @@ class EnhancedMeta(BaseModel):
     scrapeDuration: Optional[str] = None
     interactionDepth: Optional[int] = None
 
-class EnhancedInteraction(BaseModel):
+class Interaction(BaseModel):
     clicks: List[str] = []
     scrolls: int = 0
     pages: List[str] = []
@@ -107,9 +107,9 @@ class PerformanceMetrics(BaseModel):
 class ScrapeResult(BaseModel):
     url: str
     scrapedAt: str
-    meta: EnhancedMeta
+    meta: Meta
     sections: List[Section]
-    interactions: EnhancedInteraction
+    interactions: Interaction
     errors: List[Error] = []
     performance: Optional[PerformanceMetrics] = None
     warnings: List[str] = []

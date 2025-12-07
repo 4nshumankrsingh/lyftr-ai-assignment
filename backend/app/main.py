@@ -11,10 +11,9 @@ import asyncio
 from typing import Dict, Any
 
 from .models.schemas import (
-    ScrapeRequest, ScrapeResponse, ScrapeResult, EnhancedMeta, 
-    EnhancedInteraction, Error, ScrapeStrategy, PerformanceMetrics
+    ScrapeRequest, ScrapeResponse, ScrapeResult, Meta,
+    Interaction, Error, ScrapeStrategy, PerformanceMetrics
 )
-from .scraper.fallback_strategy import FallbackStrategy
 
 # Configure logging
 logging.basicConfig(
@@ -41,8 +40,16 @@ app.add_middleware(
     expose_headers=["*"]
 )
 
-# Initialize fallback strategy
-fallback_strategy = FallbackStrategy()
+# Initialize fallback strategy lazily
+_fallback_strategy = None
+
+def get_fallback_strategy():
+    """Lazy initialization of FallbackStrategy"""
+    global _fallback_strategy
+    if _fallback_strategy is None:
+        from .scraper.fallback_strategy import FallbackStrategy
+        _fallback_strategy = FallbackStrategy()
+    return _fallback_strategy
 
 # Rate limiting tracking
 request_times = {}
@@ -108,14 +115,38 @@ def read_root():
 
 @app.get("/healthz")
 def health_check():
+    strategy = get_fallback_strategy()
+
+    # Better Playwright availability check
+    playwright_available = "unavailable"
+    try:
+        # If the strategy already has an initialized scraper, inspect it
+        if getattr(strategy, 'playwright_scraper', None) is not None:
+            if hasattr(strategy.playwright_scraper, 'scrape'):
+                playwright_available = "available"
+            else:
+                playwright_available = "initialized (no scrape method)"
+        else:
+            # Try to lazy-initialize a tester instance without launching a browser
+            try:
+                from .scraper.playwright_scraper import PlaywrightScraper
+                test_scraper = PlaywrightScraper(headless=True)
+                if hasattr(test_scraper, 'scrape'):
+                    playwright_available = "test-success"
+            except Exception as e:
+                # Importing or constructing may fail if Playwright isn't installed
+                playwright_available = f"error: {str(e)[:50]}"
+    except Exception as e:
+        playwright_available = f"error: {str(e)[:50]}"
+
     return {
         "status": "ok",
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "version": "2.0.0",
         "services": {
-            "playwright": "available" if hasattr(fallback_strategy.playwright_scraper, 'scrape') else "unavailable",
             "static_scraper": "available",
-            "fallback_strategy": "available"
+            "fallback_strategy": "available",
+            "playwright": playwright_available
         }
     }
 
@@ -129,114 +160,163 @@ async def scrape_website(request: ScrapeRequest):
     Returns enhanced results with performance metrics and interaction tracking.
     """
     start_time = time.time()
-    
+
     try:
         logger.info(f"Starting scrape for URL: {request.url}")
-        
-        # Validate URL beyond basic schema
-        if not self._is_valid_url(request.url):
+
+        # Validate URL
+        if not _is_valid_url(request.url):
             raise HTTPException(
                 status_code=400,
                 detail="Invalid URL format. Must be a valid http/https URL."
             )
-        
-        # Use enhanced fallback strategy
+
+        # Use fallback strategy with timeout
+        strategy = get_fallback_strategy()
+
+        # Set a timeout for the entire scraping operation
         try:
-            strategy, scraped_data = await fallback_strategy.scrape_with_fallback(request.url)
+            strategy_used, scraped_data = await asyncio.wait_for(
+                strategy.scrape_with_fallback(request.url),
+                timeout=30.0  # 30 second timeout for entire operation
+            )
         except asyncio.TimeoutError:
             elapsed = (time.time() - start_time) * 1000
-            return ScrapeResponse(
-                result=ScrapeResult(
-                    url=request.url,
-                    scrapedAt=datetime.utcnow().isoformat() + "Z",
-                    meta=EnhancedMeta(strategy=ScrapeStrategy.ERROR),
-                    sections=[],
-                    interactions=EnhancedInteraction(),
-                    errors=[Error(
-                        message=f"Scraping timeout after {elapsed:.0f}ms",
-                        phase="timeout",
-                        timestamp=datetime.utcnow().isoformat() + "Z"
-                    )],
-                    performance=PerformanceMetrics(
-                        duration_ms=elapsed,
-                        sections_found=0,
-                        interaction_depth=0,
-                        pages_visited=0
-                    )
-                ),
-                status="error",
-                message="Scraping timeout"
-            )
-        
+            logger.error(f"Scraping timeout after {elapsed:.0f}ms")
+
+            # Try to get static results as fallback (best-effort)
+            try:
+                from .scraper.static_scraper import StaticScraper
+                static_scraper = StaticScraper()
+                static_result = await static_scraper.scrape(request.url)
+                scraped_data = static_result.dict()
+                strategy_used = "static_timeout_fallback"
+                logger.info("Used static scraper as timeout fallback")
+            except Exception as static_error:
+                logger.error(f"Static fallback after timeout also failed: {static_error}")
+                return ScrapeResponse(
+                    result=ScrapeResult(
+                        url=request.url,
+                        scrapedAt=datetime.utcnow().isoformat() + "Z",
+                        meta=Meta(),
+                        sections=[],
+                        interactions=Interaction(),
+                        errors=[Error(
+                            message=f"Scraping timeout after {elapsed:.0f}ms and static fallback also failed",
+                            phase="timeout",
+                            timestamp=datetime.utcnow().isoformat() + "Z"
+                        )],
+                        performance=PerformanceMetrics(
+                            duration_ms=elapsed,
+                            sections_found=0,
+                            interaction_depth=0,
+                            pages_visited=0
+                        )
+                    ),
+                    status="error",
+                    message="Scraping timeout"
+                )
+
         # Calculate performance metrics
         elapsed_time = (time.time() - start_time) * 1000
-        
-        # Add strategy and performance info
-        scraped_data['meta']['strategy'] = strategy
-        scraped_data['meta']['scrapeDuration'] = f"{elapsed_time:.0f}ms"
-        
-        # Calculate interaction depth
-        interactions = scraped_data.get('interactions', {})
-        interaction_depth = len(interactions.get('clicks', [])) + interactions.get('scrolls', 0)
-        scraped_data['meta']['interactionDepth'] = interaction_depth
-        
-        # Add performance metrics
-        scraped_data['performance'] = {
-            "duration_ms": elapsed_time,
-            "sections_found": len(scraped_data.get('sections', [])),
-            "interaction_depth": interaction_depth,
-            "pages_visited": len(interactions.get('pages', [])),
-            "unique_sections": len(scraped_data.get('sections', []))
-        }
-        
-        # Add total depth to interactions
-        scraped_data['interactions']['totalDepth'] = interaction_depth
-        
+
+        # Add strategy info safely
+        try:
+            scraped_data.setdefault('meta', {})
+            scraped_data['meta']['strategy'] = strategy_used
+        except Exception:
+            logger.debug("Could not set meta.strategy on scraped_data; initializing meta object")
+            scraped_data['meta'] = {'strategy': strategy_used}
+
+        # Calculate interaction depth (defensive)
+        interactions = scraped_data.get('interactions', {}) if isinstance(scraped_data, dict) else {}
+        interaction_depth = 0
+        try:
+            interaction_depth = len(interactions.get('clicks', [])) + interactions.get('scrolls', 0)
+        except Exception:
+            interaction_depth = 0
+
+        # Add performance metrics if not present
+        if 'performance' not in scraped_data:
+            scraped_data['performance'] = {
+                "duration_ms": elapsed_time,
+                "sections_found": len(scraped_data.get('sections', [])),
+                "interaction_depth": interaction_depth,
+                "pages_visited": len(interactions.get('pages', [])) if isinstance(interactions, dict) else 0,
+                "unique_sections": len(scraped_data.get('sections', []))
+            }
+
+        # Add total depth to interactions safely
+        try:
+            scraped_data.setdefault('interactions', {})
+            scraped_data['interactions']['totalDepth'] = interaction_depth
+        except Exception:
+            logger.debug("Failed to write interactions.totalDepth")
+
         # Check if minimum depth was achieved
         if interaction_depth < 3:
-            scraped_data['warnings'] = scraped_data.get('warnings', [])
+            scraped_data.setdefault('warnings', [])
             scraped_data['warnings'].append(
                 f"Minimum interaction depth not reached: {interaction_depth} < 3"
             )
-        
-        logger.info(f"Scrape completed in {elapsed_time:.0f}ms with strategy: {strategy}")
-        
+
+        logger.info(f"Scrape completed in {elapsed_time:.0f}ms with strategy: {strategy_used}")
+
         return ScrapeResponse(
             result=scraped_data,
             status="success",
-            message=f"Scraping completed with {strategy} strategy"
+            message=f"Scraping completed with {strategy_used} strategy"
         )
-        
+
     except HTTPException as he:
         raise he
     except Exception as e:
         elapsed_time = (time.time() - start_time) * 1000
-        logger.error(f"Scraping failed: {str(e)}")
-        
-        error_result = ScrapeResult(
-            url=request.url,
-            scrapedAt=datetime.utcnow().isoformat() + "Z",
-            meta=EnhancedMeta(strategy=ScrapeStrategy.ERROR),
-            sections=[],
-            interactions=EnhancedInteraction(),
-            errors=[Error(
-                message=str(e),
-                phase="general",
-                timestamp=datetime.utcnow().isoformat() + "Z"
-            )],
-            performance=PerformanceMetrics(
-                duration_ms=elapsed_time,
-                sections_found=0,
-                interaction_depth=0,
-                pages_visited=0
+        logger.exception(f"Scraping failed: {str(e)}")
+
+        # Try to get at least some static data (best-effort fallback)
+        try:
+            from .scraper.static_scraper import StaticScraper
+            static_scraper = StaticScraper()
+            static_result = await static_scraper.scrape(request.url)
+            scraped_data = static_result.dict()
+            scraped_data.setdefault('meta', {})
+            scraped_data['meta']['strategy'] = "static_error_fallback"
+
+            logger.info("Used static scraper as error fallback")
+
+            return ScrapeResponse(
+                result=scraped_data,
+                status="partial",
+                message=f"Scraping completed with static fallback after error: {str(e)}"
             )
-        )
-        
-        return ScrapeResponse(
-            result=error_result,
-            status="error",
-            message=str(e)
-        )
+        except Exception as static_error:
+            logger.exception(f"Static fallback also failed: {static_error}")
+            # If everything fails, return structured error
+            error_result = ScrapeResult(
+                url=request.url,
+                scrapedAt=datetime.utcnow().isoformat() + "Z",
+                meta=Meta(),
+                sections=[],
+                interactions=Interaction(),
+                errors=[Error(
+                    message=str(e),
+                    phase="general",
+                    timestamp=datetime.utcnow().isoformat() + "Z"
+                )],
+                performance=PerformanceMetrics(
+                    duration_ms=elapsed_time,
+                    sections_found=0,
+                    interaction_depth=0,
+                    pages_visited=0
+                )
+            )
+
+            return ScrapeResponse(
+                result=error_result,
+                status="error",
+                message=str(e)
+            )
 
 @app.get("/stats")
 async def get_stats():
@@ -251,7 +331,7 @@ async def get_stats():
         "timestamp": datetime.utcnow().isoformat() + "Z"
     }
 
-def _is_valid_url(self, url: str) -> bool:
+def _is_valid_url(url: str) -> bool:
     """Enhanced URL validation"""
     import re
     url_pattern = re.compile(
