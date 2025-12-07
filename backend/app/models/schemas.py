@@ -1,3 +1,6 @@
+"""
+Enhanced schemas with Phase 4 & 5 additions
+"""
 from pydantic import BaseModel, field_validator
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
@@ -22,6 +25,15 @@ class ErrorPhase(str, Enum):
     CLICK = "click"
     SCROLL = "scroll"
     GENERAL = "general"
+    TIMEOUT = "timeout"
+    INTERACTION = "interaction"
+    NAVIGATION = "navigation"
+
+class ScrapeStrategy(str, Enum):
+    STATIC = "static"
+    JS = "js"
+    HYBRID = "hybrid"
+    ERROR = "error"
 
 # Request schemas
 class ScrapeRequest(BaseModel):
@@ -60,29 +72,49 @@ class Section(BaseModel):
     rawHtml: str
     truncated: bool
 
-class Meta(BaseModel):
+class EnhancedMeta(BaseModel):
     title: str = ""
     description: str = ""
     language: str = ""
     canonical: Optional[str] = None
-    strategy: Optional[str] = None  # New field for scraping strategy
+    strategy: Optional[ScrapeStrategy] = None
+    keywords: List[str] = []
+    author: str = ""
+    viewport: str = ""
+    themeColor: str = ""
+    ogType: str = ""
+    scrapeDuration: Optional[str] = None
+    interactionDepth: Optional[int] = None
 
-class Interaction(BaseModel):
+class EnhancedInteraction(BaseModel):
     clicks: List[str] = []
     scrolls: int = 0
     pages: List[str] = []
+    totalDepth: int = 0
 
 class Error(BaseModel):
     message: str
     phase: str
+    timestamp: Optional[str] = None
+
+class PerformanceMetrics(BaseModel):
+    duration_ms: float
+    sections_found: int
+    interaction_depth: int
+    pages_visited: int
+    unique_sections: Optional[int] = None
 
 class ScrapeResult(BaseModel):
     url: str
-    scrapedAt: str  # Changed from datetime to string for ISO format
-    meta: Meta
+    scrapedAt: str
+    meta: EnhancedMeta
     sections: List[Section]
-    interactions: Interaction
+    interactions: EnhancedInteraction
     errors: List[Error] = []
+    performance: Optional[PerformanceMetrics] = None
+    warnings: List[str] = []
 
 class ScrapeResponse(BaseModel):
     result: ScrapeResult
+    status: str = "success"
+    message: Optional[str] = None
