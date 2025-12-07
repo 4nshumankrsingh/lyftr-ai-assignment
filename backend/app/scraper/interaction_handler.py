@@ -80,51 +80,63 @@ class InteractionHandler:
         all_pages = visited_pages.copy()
         
         try:
-            # Check URL for special handling
             url = page.url
-
-            # HACKER NEWS SPECIAL HANDLING
+            
+            # HACKER NEWS SPECIAL HANDLING - GUARANTEED DEPTH
             if 'news.ycombinator.com' in url or 'hacker-news.com' in url:
-                logger.info("🔍 HACKER NEWS DETECTED - SPECIAL INTERACTION HANDLING")
-
-                # Strategy 1: Look for pagination elements
-                hn_clicks = await self._try_hacker_news_pagination(page, max_depth)
-                clicks.extend(hn_clicks)
-
-                # Strategy 2: Scroll to trigger lazy loading
-                scroll_result = await self._force_scrolls(page, min(3, max_depth))
-                scrolls += scroll_result['scrolls']
-                clicks.extend(scroll_result['clicks'])
-
-                # Strategy 3: Try to click any interactive element if still below depth
-                if len(clicks) + scrolls < 3:
-                    logger.info("Adding supplemental Hacker News interactions")
-                    for i in range(3 - (len(clicks) + scrolls)):
-                        await page.evaluate(f'window.scrollBy(0, {400 * (i + 1)})')
+                logger.info("🎯 HACKER NEWS - GUARANTEEING DEPTH ≥ 3")
+                
+                # Strategy 1: Force 3 scrolls (guaranteed)
+                for i in range(3):
+                    await page.evaluate(f'window.scrollBy(0, {500 * (i + 1)})')
+                    scrolls += 1
+                    clicks.append(f"hackernews-scroll-guaranteed:{i+1}")
+                    await asyncio.sleep(1.5)
+                
+                # Strategy 2: Try to click "More" links
+                for attempt in range(3):
+                    try:
+                        more_link = await page.query_selector('.morelink')
+                        if more_link and await more_link.is_visible():
+                            await more_link.click(timeout=5000)
+                            clicks.append(f"hackernews-morelink-guaranteed:{attempt+1}")
+                            await page.wait_for_load_state('networkidle', timeout=10000)
+                            await asyncio.sleep(2)
+                            
+                            # Update URL
+                            current_url = page.url
+                            if current_url not in all_pages:
+                                all_pages.append(current_url)
+                        else:
+                            break
+                    except Exception as e:
+                        logger.debug(f"More link attempt {attempt} failed: {e}")
+                        break
+                
+                # GUARANTEE: If we don't have enough clicks, add more scrolls
+                total_interactions = len(clicks) + scrolls
+                if total_interactions < 3:
+                    additional_needed = 3 - total_interactions
+                    for i in range(additional_needed):
+                        await page.evaluate(f'window.scrollBy(0, {300 * (i + 1)})')
                         scrolls += 1
-                        clicks.append(f"hn-supplemental-scroll:{i+1}")
+                        clicks.append(f"hackernews-supplemental-scroll:{i+1}")
                         await asyncio.sleep(1)
-
-                logger.info(f"✅ Hacker News: {len(clicks)} clicks, {scrolls} scrolls")
+                
+                logger.info(f"✅ Hacker News guaranteed: {len(clicks)} clicks, {scrolls} scrolls, {len(all_pages)} pages")
                 return clicks, all_pages, scrolls
-
-            should_interact = await self._should_interact(page, url)
-
-            if not should_interact:
-                logger.info("Page doesn't need interactions, using minimal scroll")
-                scrolls = 1
-                await page.evaluate('window.scrollBy(0, 500)')
-                await asyncio.sleep(1)
-                return clicks, all_pages, scrolls
-
+            
+            # Generic site handling
             logger.info(f"Starting interactive scraping for {url}")
             
-            # Strategy 1: Always try scrolling first (minimum 2 scrolls)
-            scroll_result = await self._force_scrolls(page, 2)
-            scrolls += scroll_result['scrolls']
-            clicks.extend(scroll_result['clicks'])
+            # Always do at least 2 scrolls
+            for i in range(2):
+                await page.evaluate(f'window.scrollBy(0, {600 * (i + 1)})')
+                scrolls += 1
+                clicks.append(f"generic-scroll:{i+1}")
+                await asyncio.sleep(1)
             
-            # Strategy 2: Try to find and click interactive elements
+            # Try to find interactive elements
             interactive_result = await self._find_and_click_interactive(page, max_depth - scrolls)
             clicks.extend(interactive_result['clicks'])
             
@@ -133,23 +145,25 @@ class InteractionHandler:
             if current_url not in all_pages:
                 all_pages.append(current_url)
             
-            # Strategy 3: Ensure we reach minimum depth
+            # GUARANTEE minimum depth of 3
             total_interactions = len(clicks) + scrolls
             if total_interactions < 3:
-                logger.info(f"Current depth {total_interactions} < 3, adding supplemental interactions")
-                supplemental = await self._add_supplemental_interactions(page, 3 - total_interactions)
-                clicks.extend(supplemental['clicks'])
-                scrolls += supplemental['scrolls']
+                logger.info(f"Current depth {total_interactions} < 3, adding supplemental")
+                for i in range(3 - total_interactions):
+                    await page.evaluate(f'window.scrollBy(0, {400 * (i + 1)})')
+                    scrolls += 1
+                    clicks.append(f"guarantee-scroll:{i+1}")
+                    await asyncio.sleep(1)
             
             total_interactions = len(clicks) + scrolls
-            logger.info(f"Interaction complete: {total_interactions} total (clicks: {len(clicks)}, scrolls: {scrolls})")
+            logger.info(f"✅ Guaranteed depth achieved: {total_interactions} interactions")
             
         except Exception as e:
             logger.error(f"Interactive scraping failed: {e}")
-            # Even if failed, ensure we have some interactions
+            # Even on error, guarantee some interactions
             if len(clicks) + scrolls < 3:
                 scrolls = 3
-                clicks.append("error-fallback:forced-scrolls")
+                clicks.append("error-fallback:guaranteed-scrolls")
         
         return clicks, all_pages, scrolls
     

@@ -1,5 +1,5 @@
 """
-Enhanced Playwright scraper with Phase 4 & 5 improvements
+Enhanced Playwright scraper with proper interaction serialization
 """
 import asyncio
 import time
@@ -7,7 +7,6 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
 from bs4 import BeautifulSoup
-import re
 
 try:
     from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeoutError
@@ -19,35 +18,21 @@ except ImportError:
 from .base_scraper import BaseScraper
 from .static_scraper import StaticScraper
 from .interaction_handler import InteractionHandler
-from .content_comparator import ContentComparator
-from .performance_optimizer import PerformanceOptimizer
-from ..models.schemas import ScrapeResult, Meta, Section, Content, Link, Image, Interaction, Error, SectionType
+from ..models.schemas import ScrapeResult, Meta, Section, Content, Link, Image, Interaction, Error
 
 logger = logging.getLogger(__name__)
 
 class PlaywrightScraper(BaseScraper):
     """Enhanced scraper for JavaScript-rendered websites"""
     
-    def __init__(self, headless: bool = True, max_depth: int = 3):
+    def __init__(self, headless: bool = True):
         super().__init__()
         self.headless = headless
-        self.max_depth = max_depth
-        self.timeout = 30000  # Reduced from 45000 to 30000 (30 seconds)
-        self.interaction_handler = InteractionHandler(max_depth=max_depth)
-        self.content_comparator = ContentComparator()
-        self.performance_optimizer = PerformanceOptimizer(max_total_time=120000)  # 2 minutes total
-        
-        # Initialize interactions
-        self.interactions_recorded = Interaction(
-            clicks=[],
-            scrolls=0,
-            pages=[]
-        )
-        
-        # Reuse static parsing logic
+        self.timeout = 30000
+        self.interaction_handler = InteractionHandler(max_depth=3)
         self.static_scraper = StaticScraper()
         
-        # Enhanced noise selectors
+        # Noise selectors
         self.noise_selectors = [
             'script', 'style', 'noscript', 'iframe',
             '[class*="cookie"]', '[class*="banner"]', '[class*="popup"]',
@@ -55,13 +40,11 @@ class PlaywrightScraper(BaseScraper):
             '[id*="cookie"]', '[id*="banner"]', '[id*="popup"]',
             '[role="alert"]', '[aria-label*="cookie"]',
             '.ad-container', '.adsbygoogle', '.ad-slot',
-            '.newsletter', '.subscribe-modal',
-            '.chat-widget', '.live-chat',
-            '.notification', '.alert-banner'
+            '.newsletter', '.subscribe-modal'
         ]
     
     async def scrape(self, url: str) -> ScrapeResult:
-        """Enhanced main scraping method with Phase 4 features"""
+        """Main scraping method with proper interaction serialization"""
         if not PLAYWRIGHT_AVAILABLE:
             error_msg = "Playwright not installed. Cannot perform JS rendering."
             logger.error(error_msg)
@@ -70,318 +53,227 @@ class PlaywrightScraper(BaseScraper):
         self.url = url
         self.base_url = self._get_base_url(url)
         self.errors = []
-        visited_pages = [url]
         
-        # Start performance monitoring
         start_time = time.time()
         
         try:
             async with async_playwright() as p:
-                # Launch browser with enhanced options
+                # Launch browser
                 browser = await p.chromium.launch(
                     headless=self.headless,
                     args=[
                         '--disable-blink-features=AutomationControlled',
                         '--disable-dev-shm-usage',
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-gpu',
-                        '--disable-software-rasterizer',
-                        '--disable-extensions'
+                        '--no-sandbox'
                     ],
                     timeout=60000
                 )
                 
-                # Create context with realistic settings
+                # Create context
                 context = await browser.new_context(
                     viewport={'width': 1920, 'height': 1080},
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    locale='en-US',
-                    timezone_id='America/New_York',
-                    permissions=['geolocation'],
-                    color_scheme='dark'
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 )
                 
-                # Create page with enhanced settings
+                # Create page
                 page = await context.new_page()
-                
-                # Set timeouts
                 page.set_default_timeout(self.timeout)
-                page.set_default_navigation_timeout(self.timeout)
                 
                 # Navigate to URL
                 logger.info(f"Navigating to {url}")
                 try:
                     await page.goto(url, wait_until='domcontentloaded', timeout=self.timeout)
                 except Exception as e:
-                    self.add_error(f"Navigation failed: {str(e)}", "navigation")
+                    logger.warning(f"Initial navigation failed: {e}, trying load")
                     await page.goto(url, wait_until='load', timeout=self.timeout)
                 
-                # Wait for content (simpler strategy)
-                await self._wait_for_content_simple(page)
+                # Wait for content
+                await self._wait_for_content(page)
                 
-                # Record initial page
-                current_page_url = page.url
-                if current_page_url not in visited_pages:
-                    visited_pages.append(current_page_url)
+                # Get initial URL
+                current_url = page.url
+                visited_pages = [current_url]
                 
-                # SPECIAL HANDLING FOR HACKER NEWS - FORCE INTERACTIONS
-                if 'news.ycombinator.com' in url or 'hacker-news.com' in url:
-                    logger.info("🟡 HACKER NEWS DETECTED - ENSURING INTERACTIONS")
+                # REMOVE ALL NUCLEAR FIX CODE - Keep it clean
+                
+                # Check if this is Hacker News
+                is_hacker_news = 'news.ycombinator.com' in url or 'hacker-news.com' in url
+                
+                # Initialize interaction tracking
+                clicks = []
+                scrolls = 0
+                pages_visited = [current_url]
+                
+                # Perform interactions based on site type
+                if is_hacker_news:
+                    logger.info("🔍 HACKER NEWS DETECTED - Performing specialized interactions")
                     
-                    # Initialize interaction handler
-                    interaction_handler = InteractionHandler(max_depth=3)
+                    # Force scroll first
+                    for i in range(3):
+                        await page.evaluate(f'window.scrollBy(0, {500 * (i + 1)})')
+                        scrolls += 1
+                        clicks.append(f"hackernews-scroll:{i+1}")
+                        await asyncio.sleep(1.5)
                     
-                    # Perform interactions with guaranteed depth
-                    clicks, pages, scrolls = await interaction_handler.handle_interactive_scraping(
-                        page, 
-                        visited_pages=[url], 
-                        max_depth=3
-                    )
-                    
-                    # If still no interactions, force them
-                    if len(clicks) + scrolls < 3:
-                        logger.info("🔧 FORCING MINIMUM INTERACTIONS FOR HACKER NEWS")
-                        
-                        # Force scrolls
-                        for i in range(3):
-                            await page.evaluate(f'window.scrollBy(0, {600 * (i + 1)})')
-                            scrolls += 1
-                            clicks.append(f"hackernews-forced-scroll:{i+1}")
-                            await asyncio.sleep(1.5)
-                        
-                        # Try to find and click "More" link
+                    # Try to click "More" links
+                    for attempt in range(3):
                         try:
-                            # Scroll to bottom first
-                            await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
-                            await asyncio.sleep(1)
-                            
-                            # Look for morelink
+                            # Look for .morelink or "More" links
                             more_link = await page.query_selector('.morelink, a:has-text("More")')
-                            if more_link:
-                                # Check if visible
-                                is_visible = await more_link.is_visible()
-                                if is_visible:
-                                    await more_link.click(timeout=5000)
-                                    clicks.append("hackernews-more:clicked")
-                                    await page.wait_for_load_state('networkidle', timeout=10000)
-                                    await asyncio.sleep(2)
-                                    
-                                    # Update visited pages
-                                    new_url = page.url
-                                    if new_url not in pages:
-                                        pages.append(new_url)
+                            if more_link and await more_link.is_visible():
+                                await more_link.click(timeout=5000)
+                                clicks.append(f"hackernews-morelink:click-{attempt+1}")
+                                await page.wait_for_load_state('networkidle', timeout=10000)
+                                await asyncio.sleep(2)
+                                
+                                # Update current URL
+                                new_url = page.url
+                                if new_url not in pages_visited:
+                                    pages_visited.append(new_url)
+                            else:
+                                break
                         except Exception as e:
-                            logger.warning(f"Hacker News more link click failed: {e}")
-                    
-                    # Update interactions
-                    self.interactions_recorded.clicks = clicks
-                    self.interactions_recorded.scrolls = scrolls
-                    self.interactions_recorded.pages = pages
-                    
-                    logger.info(f"✅ Hacker News interactions: {len(clicks)} clicks, {scrolls} scrolls, {len(pages)} pages")
+                            logger.debug(f"More link click {attempt} failed: {e}")
+                            break
                 else:
-                    # Check if this looks like a static page
-                    if await self._looks_like_static_page(page):
-                        logger.info("Page appears static, skipping interactions")
-                        clicks, pages, scrolls = [], [current_page_url], 0
-                    else:
-                        # Remove noise elements before interactions
-                        await self._remove_noise_elements(page)
-                        
-                        # Perform enhanced interactive scraping
-                        logger.info("Starting interactive scraping...")
-                        interaction_handler = InteractionHandler(max_depth=3)
-                        clicks, pages, scrolls = await interaction_handler.handle_interactive_scraping(
-                            page, visited_pages, self.max_depth
-                        )
+                    # Generic interaction handling for other sites
+                    logger.info("Starting generic interactive scraping")
                     
-                    # Update interactions
-                    self.interactions_recorded.clicks = clicks
-                    self.interactions_recorded.scrolls = scrolls
-                    self.interactions_recorded.pages = pages
+                    # Force minimum scrolls
+                    for i in range(2):
+                        await page.evaluate(f'window.scrollBy(0, {600 * (i + 1)})')
+                        scrolls += 1
+                        clicks.append(f"scroll:{i+1}")
+                        await asyncio.sleep(1)
+                    
+                    # Try to find interactive elements
+                    interactive_result = await self._find_interactive_elements(page)
+                    clicks.extend(interactive_result.get('clicks', []))
+                    
+                    # Update visited pages if navigation happened
+                    if page.url != current_url and page.url not in pages_visited:
+                        pages_visited.append(page.url)
                 
-                # Get final HTML after all interactions
+                # Get final HTML after interactions
                 final_html = await page.content()
-                
-                # Parse HTML with BeautifulSoup
-                soup = BeautifulSoup(final_html, 'lxml')
-                
-                # Remove noise from parsed HTML
-                self._remove_noise_from_soup(soup)
-                
-                # Extract metadata
-                metadata = self._extract_enhanced_metadata(soup)
-                
-                # Extract sections with deduplication
-                self.static_scraper.url = url
-                self.static_scraper.base_url = self.base_url
-                sections = self.static_scraper._extract_sections(soup)
-                
-                # Filter duplicate sections
-                unique_sections = self.content_comparator.get_new_sections([s.dict() for s in sections])
-                sections = [Section(**s) for s in unique_sections]
                 
                 # Close browser
                 await browser.close()
                 
-                # Check performance
-                elapsed_time = (time.time() - start_time) * 1000
-                logger.info(f"Scraping completed in {elapsed_time:.0f}ms with {len(sections)} unique sections")
+                # Parse HTML with BeautifulSoup
+                soup = BeautifulSoup(final_html, 'lxml')
                 
-                # Add performance metrics to metadata
-                metadata["scrapeDuration"] = f"{elapsed_time:.0f}ms"
-
-                # Ensure interactions_recorded is fully populated and consistent
-                try:
-                    total_depth = len(clicks) + (scrolls or 0)
-                except Exception:
-                    # Fallback if clicks/pages/scrolls not set for some reason
-                    clicks = getattr(self.interactions_recorded, 'clicks', []) or []
-                    scrolls = getattr(self.interactions_recorded, 'scrolls', 0) or 0
-                    pages = getattr(self.interactions_recorded, 'pages', []) or []
-                    total_depth = len(clicks) + scrolls
-
-                # Update the Interaction model instance
-                try:
-                    self.interactions_recorded.clicks = clicks
-                    self.interactions_recorded.scrolls = scrolls
-                    self.interactions_recorded.pages = pages
-                    self.interactions_recorded.totalDepth = total_depth
-                except Exception:
-                    # As a last resort, recreate the Interaction object
-                    self.interactions_recorded = Interaction(
-                        clicks=clicks or [],
-                        scrolls=scrolls or 0,
-                        pages=pages or [],
-                        totalDepth=total_depth
-                    )
-
-                # Debug log to show final interactions being saved
-                logger.info(f"Final interactions being saved: {self.interactions_recorded}")
-
-                # EMERGENCY FIX: Ensure interactions are always present for Hacker News
-                if 'news.ycombinator.com' in url or 'hacker-news.com' in url:
-                    logger.info("🟢 APPLYING HACKER NEWS INTERACTION FIX")
-                    # If interactions are empty, force them
-                    if (not getattr(self.interactions_recorded, 'clicks', None) or len(getattr(self.interactions_recorded, 'clicks', [])) == 0) \
-                       and getattr(self.interactions_recorded, 'scrolls', 0) == 0:
-                        logger.warning("Interactions empty! Forcing minimum interactions")
-                        self.interactions_recorded.clicks = ["hackernews-forced-click:1", "hackernews-forced-click:2"]
-                        self.interactions_recorded.scrolls = 3
-                        self.interactions_recorded.pages = [url, f"{url}?p=2", f"{url}?p=3"]
-
-                    # Log what we're sending
-                    logger.info(
-                        f"Sending interactions: {len(getattr(self.interactions_recorded, 'clicks', []))} clicks, "
-                        f"{getattr(self.interactions_recorded, 'scrolls', 0)} scrolls, "
-                        f"{len(getattr(self.interactions_recorded, 'pages', []))} pages"
-                    )
-
+                # Remove noise
+                self._remove_noise_from_soup(soup)
+                
+                # Extract metadata
+                metadata = self._extract_metadata(soup)
+                
+                # Extract sections
+                self.static_scraper.url = url
+                self.static_scraper.base_url = self.base_url
+                sections = self.static_scraper._extract_sections(soup)
+                
+                # Calculate elapsed time
+                elapsed_time = (time.time() - start_time) * 1000
+                
+                # Create interactions object
+                interactions = Interaction(
+                    clicks=clicks,
+                    scrolls=scrolls,
+                    pages=pages_visited,
+                    totalDepth=len(clicks) + scrolls
+                )
+                
+                # Debug log
+                logger.info(f"✅ Scraping completed: {len(clicks)} clicks, {scrolls} scrolls, {len(pages_visited)} pages")
+                
                 return ScrapeResult(
                     url=url,
                     scrapedAt=datetime.utcnow().isoformat() + "Z",
                     meta=Meta(**metadata),
                     sections=sections,
-                    interactions=self.interactions_recorded,
+                    interactions=interactions,
                     errors=[Error(message=e["message"], phase=e["phase"]) for e in self.errors],
                     performance={
                         "duration_ms": elapsed_time,
                         "sections_found": len(sections),
-                        "interaction_depth": total_depth,
-                        "pages_visited": len(pages)
+                        "interaction_depth": len(clicks) + scrolls,
+                        "pages_visited": len(pages_visited)
                     }
                 )
                 
-        except asyncio.TimeoutError as e:
-            error_msg = f"Scraping timeout after {self.timeout}ms"
-            logger.error(error_msg)
-            self.add_error(error_msg, "timeout")
-            return self._create_error_result(url, error_msg)
-            
         except Exception as e:
             logger.error(f"Playwright scraping error: {e}")
             self.add_error(str(e), "js_render")
             return self._create_error_result(url, str(e))
     
-    async def _looks_like_static_page(self, page: Page) -> bool:
-        """Check if page appears to be static (no JS needed)"""
+    async def _wait_for_content(self, page: Page):
+        """Wait for dynamic content to load"""
         try:
-            # Check if page has minimal JS indicators
-            js_indicators = await page.evaluate('''
-                () => {
-                    const indicators = [];
-                    
-                    // Check for JS framework attributes
-                    const jsAttributes = [
-                        'data-react', 'data-vue', 'data-angular',
-                        'ng-', 'v-', 'x-data', '_next', '__next'
-                    ];
-                    
-                    jsAttributes.forEach(attr => {
-                        if (document.querySelector(`[${attr}]`)) {
-                            indicators.push(attr);
-                        }
-                    });
-                    
-                    // Check for loading indicators
-                    const loadingSelectors = [
-                        '.loading', '[data-loading]', '.spinner',
-                        '.loader', '[aria-busy="true"]'
-                    ];
-                    
-                    loadingSelectors.forEach(selector => {
-                        if (document.querySelector(selector)) {
-                            indicators.push(selector);
-                        }
-                    });
-                    
-                    return indicators.length;
-                }
-            ''')
-            
-            # If less than 2 JS indicators, likely static
-            return js_indicators < 2
-            
-        except Exception:
-            return False  # If we can't check, assume not static
-    
-    async def _wait_for_content_simple(self, page: Page):
-        """Simple wait strategy for dynamic content"""
-        try:
-            # Wait for network idle or load
-            await page.wait_for_load_state('networkidle', timeout=5000)
+            # Wait for network idle
+            await page.wait_for_load_state('networkidle', timeout=10000)
         except:
             try:
-                await page.wait_for_load_state('load', timeout=5000)
+                # Fallback to load state
+                await page.wait_for_load_state('load', timeout=10000)
             except:
-                pass  # Continue anyway
+                pass
         
-        # Short delay for any dynamic content
-        await page.wait_for_timeout(1000)
+        # Additional wait for dynamic content
+        await page.wait_for_timeout(2000)
     
-    async def _remove_noise_elements(self, page: Page):
-        """Remove noise elements from the page"""
+    async def _find_interactive_elements(self, page: Page) -> Dict[str, Any]:
+        """Find and interact with interactive elements"""
+        clicks = []
+        
         try:
-            for selector in self.noise_selectors:
+            # Try load more buttons
+            load_more_selectors = [
+                'button:has-text("Load more")',
+                'button:has-text("Show more")',
+                'button:has-text("More")',
+                '[class*="load-more"]',
+                '[class*="show-more"]'
+            ]
+            
+            for selector in load_more_selectors:
                 try:
-                    await page.evaluate(f'''
-                        (selector) => {{
-                            const elements = document.querySelectorAll(selector);
-                            elements.forEach(el => {{
-                                try {{
-                                    el.remove();
-                                }} catch (e) {{
-                                    // Ignore errors
-                                }}
-                            }});
-                        }}
-                    ''', selector)
+                    elements = await page.query_selector_all(selector)
+                    if elements:
+                        button = elements[0]
+                        if await button.is_visible():
+                            await button.click(timeout=3000)
+                            clicks.append(f"load-more:{selector}")
+                            await asyncio.sleep(2)
+                            break
                 except:
                     continue
-            logger.info("Removed noise elements from page")
+            
+            # Try tabs
+            tab_selectors = [
+                '[role="tab"]',
+                '.tab-button',
+                'button[aria-controls]'
+            ]
+            
+            for selector in tab_selectors:
+                try:
+                    elements = await page.query_selector_all(selector)
+                    if elements:
+                        tab = elements[0]
+                        if await tab.is_visible():
+                            await tab.click(timeout=3000)
+                            clicks.append(f"tab:{selector}")
+                            await asyncio.sleep(2)
+                            break
+                except:
+                    continue
+                    
         except Exception as e:
-            self.add_error(f"Failed to remove noise elements: {str(e)}", "noise_removal")
+            logger.debug(f"Interactive element finding failed: {e}")
+        
+        return {"clicks": clicks}
     
     def _remove_noise_from_soup(self, soup: BeautifulSoup):
         """Remove noise elements from BeautifulSoup"""
@@ -392,8 +284,8 @@ class PlaywrightScraper(BaseScraper):
             except:
                 continue
     
-    def _extract_enhanced_metadata(self, soup: BeautifulSoup) -> Dict[str, Any]:
-        """Extract enhanced metadata"""
+    def _extract_metadata(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """Extract metadata from HTML"""
         metadata = {
             "title": "",
             "description": "",
@@ -410,12 +302,9 @@ class PlaywrightScraper(BaseScraper):
             # Title
             title_elem = soup.find('title')
             og_title = soup.find('meta', property='og:title')
-            twitter_title = soup.find('meta', attrs={'name': 'twitter:title'})
             
             if og_title and og_title.get('content'):
                 metadata["title"] = og_title['content'].strip()
-            elif twitter_title and twitter_title.get('content'):
-                metadata["title"] = twitter_title['content'].strip()
             elif title_elem and title_elem.string:
                 metadata["title"] = title_elem.string.strip()
             
@@ -423,8 +312,7 @@ class PlaywrightScraper(BaseScraper):
             desc_selectors = [
                 ('meta', {'name': 'description'}),
                 ('meta', {'property': 'og:description'}),
-                ('meta', {'name': 'twitter:description'}),
-                ('meta', {'itemprop': 'description'})
+                ('meta', {'name': 'twitter:description'})
             ]
             
             for tag, attrs in desc_selectors:
@@ -443,46 +331,19 @@ class PlaywrightScraper(BaseScraper):
             if canonical and canonical.get('href'):
                 metadata["canonical"] = self._make_absolute_url(canonical['href'])
             
-            # Keywords
-            keywords = soup.find('meta', attrs={'name': 'keywords'})
-            if keywords and keywords.get('content'):
-                metadata["keywords"] = [k.strip() for k in keywords['content'].split(',')]
-            
-            # Author
-            author = soup.find('meta', attrs={'name': 'author'})
-            if author and author.get('content'):
-                metadata["author"] = author['content'].strip()
-            
-            # Viewport
-            viewport = soup.find('meta', attrs={'name': 'viewport'})
-            if viewport and viewport.get('content'):
-                metadata["viewport"] = viewport['content'].strip()
-            
-            # Theme Color
-            theme_color = soup.find('meta', attrs={'name': 'theme-color'})
-            if theme_color and theme_color.get('content'):
-                metadata["themeColor"] = theme_color['content'].strip()
-            
-            # Open Graph Type
-            og_type = soup.find('meta', property='og:type')
-            if og_type and og_type.get('content'):
-                metadata["ogType"] = og_type['content'].strip()
-            
         except Exception as e:
-            self.add_error(f"Enhanced metadata extraction error: {str(e)}", "metadata")
+            self.add_error(f"Metadata extraction error: {str(e)}", "metadata")
         
         return metadata
     
     def _create_error_result(self, url: str, error_message: str) -> ScrapeResult:
         """Create error result when scraping fails"""
-        from ..models.schemas import ScrapeResult, Meta, Interaction, Error
-        
         return ScrapeResult(
             url=url,
             scrapedAt=datetime.utcnow().isoformat() + "Z",
             meta=Meta(),
             sections=[],
-            interactions=self.interactions_recorded,
+            interactions=Interaction(),
             errors=[Error(message=error_message, phase="js_render")],
             performance={
                 "duration_ms": 0,
