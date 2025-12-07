@@ -3,8 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 import logging
 
-from .models.schemas import ScrapeRequest, ScrapeResponse, ScrapeResult, Meta, Interaction, Error
-from .scraper.static_scraper import StaticScraper
+from .models.schemas import ScrapeRequest, ScrapeResponse, ScrapeResult, Meta, Interaction, Error, Section, Content, Link, Image, SectionType
+from .scraper.fallback_strategy import FallbackStrategy
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,6 +25,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize fallback strategy
+fallback_strategy = FallbackStrategy()
+
 @app.get("/")
 def read_root():
     return {
@@ -42,38 +45,29 @@ def health_check():
 @app.post("/scrape", response_model=ScrapeResponse)
 async def scrape_website(request: ScrapeRequest):
     """
-    Scrape a website and return structured JSON
+    Scrape a website using intelligent fallback strategy
     
     - **url**: The website URL to scrape (must start with http:// or https://)
     """
     try:
         logger.info(f"Scraping URL: {request.url}")
         
-        # Create scraper instance
-        scraper = StaticScraper(request.url)
+        # Use fallback strategy
+        strategy, scraped_data = await fallback_strategy.scrape_with_fallback(request.url)
         
-        # Perform scraping
-        scraped_data = await scraper.scrape()
+        # Add strategy info to result
+        scraped_data['meta']['strategy'] = strategy
         
-        # Build response
-        result = ScrapeResult(
-            url=scraped_data["url"],
-            scrapedAt=datetime.utcnow(),
-            meta=Meta(**scraped_data["meta"]),
-            sections=scraped_data["sections"],
-            interactions=Interaction(clicks=[], scrolls=0, pages=[request.url]),
-            errors=[Error(**error) for error in scraped_data.get("errors", [])]
-        )
-        
-        return ScrapeResponse(result=result)
+        return ScrapeResponse(result=scraped_data)
         
     except Exception as e:
         logger.error(f"Scraping failed: {str(e)}")
-        # Return error response
+        
+        # Create error response
         result = ScrapeResult(
             url=request.url,
-            scrapedAt=datetime.utcnow(),
-            meta=Meta(),
+            scrapedAt=datetime.utcnow().isoformat() + "Z",
+            meta=Meta(strategy="error"),
             sections=[],
             interactions=Interaction(),
             errors=[Error(message=str(e), phase="general")]

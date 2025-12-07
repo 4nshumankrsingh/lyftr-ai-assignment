@@ -1,25 +1,30 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any, List 
-from urllib.parse import urljoin, urlparse
 import logging
 
 logger = logging.getLogger(__name__)
 
 class BaseScraper(ABC):
-    """Abstract base class for all scrapers"""
+    """Base class for all scrapers with utility methods"""
     
-    def __init__(self, url: str):
-        self.url = url
-        self.base_url = self._get_base_url(url)
+    def __init__(self):
+        self.url = ""
+        self.base_url = ""
         self.errors = []
+    
+    @abstractmethod
+    async def scrape(self, url: str) -> dict:
+        """Main scraping method to be implemented by subclasses"""
+        pass
         
     def _get_base_url(self, url: str) -> str:
         """Extract base URL from full URL"""
+        from urllib.parse import urlparse
         parsed = urlparse(url)
         return f"{parsed.scheme}://{parsed.netloc}"
     
     def _make_absolute_url(self, url: str) -> str:
         """Convert relative URL to absolute"""
+        from urllib.parse import urljoin
         if url.startswith(('http://', 'https://', '//')):
             if url.startswith('//'):
                 return f"https:{url}"
@@ -30,18 +35,3 @@ class BaseScraper(ABC):
         """Add error to errors list"""
         self.errors.append({"message": message, "phase": phase})
         logger.error(f"[{phase}] {message}")
-    
-    @abstractmethod
-    async def scrape(self) -> Dict[str, Any]:
-        """Main scraping method to be implemented by subclasses"""
-        pass
-    
-    @abstractmethod
-    def extract_metadata(self, html: str) -> Dict[str, Any]:
-        """Extract metadata from HTML"""
-        pass
-    
-    @abstractmethod
-    def parse_sections(self, html: str) -> List[Dict[str, Any]]:
-        """Parse HTML into sections"""
-        pass

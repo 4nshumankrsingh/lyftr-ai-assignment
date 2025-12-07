@@ -1,4 +1,4 @@
-from pydantic import BaseModel, HttpUrl, field_validator
+from pydantic import BaseModel, field_validator
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
 from enum import Enum
@@ -65,6 +65,7 @@ class Meta(BaseModel):
     description: str = ""
     language: str = ""
     canonical: Optional[str] = None
+    strategy: Optional[str] = None  # New field for scraping strategy
 
 class Interaction(BaseModel):
     clicks: List[str] = []
@@ -73,11 +74,11 @@ class Interaction(BaseModel):
 
 class Error(BaseModel):
     message: str
-    phase: ErrorPhase
+    phase: str
 
 class ScrapeResult(BaseModel):
     url: str
-    scrapedAt: datetime
+    scrapedAt: str  # Changed from datetime to string for ISO format
     meta: Meta
     sections: List[Section]
     interactions: Interaction

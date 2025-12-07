@@ -14,19 +14,29 @@ Write-Host "Installing Python packages..." -ForegroundColor Yellow
 pip install -r backend/requirements.txt
 
 Write-Host "Installing Playwright browsers..." -ForegroundColor Yellow
-playwright install
+python -m playwright install chromium
 
 Write-Host "Setting up frontend..." -ForegroundColor Yellow
 cd frontend
 npm install
-npm run build
 cd ..
 
-Write-Host "✅ Setup complete! Starting server..." -ForegroundColor Green
-Write-Host "🌐 Server running at: http://localhost:8000" -ForegroundColor Cyan
-Write-Host "📋 Open this in your browser to use the scraper!" -ForegroundColor Cyan
-Write-Host "Press Ctrl+C to stop the server" -ForegroundColor Yellow
-
-# Start the FastAPI server
-cd backend
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+Write-Host "✅ Setup complete!" -ForegroundColor Green
+Write-Host ""
+Write-Host "📋 Start the application in two separate terminals:" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Terminal 1 (Backend):" -ForegroundColor Yellow
+Write-Host "cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload" -ForegroundColor White
+Write-Host ""
+Write-Host "Terminal 2 (Frontend):" -ForegroundColor Yellow
+Write-Host "cd frontend && npm run dev" -ForegroundColor White
+Write-Host ""
+Write-Host "🌐 Backend: http://localhost:8000" -ForegroundColor Cyan
+Write-Host "🌐 Frontend: http://localhost:5173" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "🧪 Test URLs:" -ForegroundColor Green
+Write-Host "• Static: https://en.wikipedia.org/wiki/Artificial_intelligence" -ForegroundColor White
+Write-Host "• JS-Heavy: https://vercel.com/" -ForegroundColor White
+Write-Host "• Tabs: https://mui.com/material-ui/react-tabs/" -ForegroundColor White
+Write-Host ""
+Write-Host "Press Ctrl+C to stop the servers" -ForegroundColor Yellow
