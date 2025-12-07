@@ -1,10 +1,40 @@
-from pydantic import BaseModel
-from typing import List, Optional, Any
+from pydantic import BaseModel, HttpUrl, field_validator
+from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
+from enum import Enum
 
+# Enums for validation
+class SectionType(str, Enum):
+    HERO = "hero"
+    SECTION = "section"
+    NAV = "nav"
+    FOOTER = "footer"
+    LIST = "list"
+    GRID = "grid"
+    FAQ = "faq"
+    PRICING = "pricing"
+    UNKNOWN = "unknown"
+
+class ErrorPhase(str, Enum):
+    FETCH = "fetch"
+    RENDER = "render"
+    PARSE = "parse"
+    CLICK = "click"
+    SCROLL = "scroll"
+    GENERAL = "general"
+
+# Request schemas
 class ScrapeRequest(BaseModel):
     url: str
+    
+    @field_validator('url')
+    @classmethod
+    def validate_url(cls, v):
+        if not v.startswith(('http://', 'https://')):
+            raise ValueError('URL must start with http:// or https://')
+        return v
 
+# Content schemas
 class Link(BaseModel):
     text: str
     href: str
@@ -19,11 +49,11 @@ class Content(BaseModel):
     links: List[Link] = []
     images: List[Image] = []
     lists: List[List[str]] = []
-    tables: List[Any] = []
+    tables: List[Dict[str, Any]] = []
 
 class Section(BaseModel):
     id: str
-    type: str  # hero, section, nav, footer, etc.
+    type: SectionType = SectionType.UNKNOWN
     label: str
     sourceUrl: str
     content: Content
@@ -43,7 +73,7 @@ class Interaction(BaseModel):
 
 class Error(BaseModel):
     message: str
-    phase: str
+    phase: ErrorPhase
 
 class ScrapeResult(BaseModel):
     url: str
