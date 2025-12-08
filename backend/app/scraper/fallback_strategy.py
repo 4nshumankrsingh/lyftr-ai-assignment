@@ -2,6 +2,7 @@
 Intelligent fallback strategy for choosing between static and JS rendering
 Prioritizes known static domains and lazy-initializes Playwright.
 """
+import datetime
 import re
 from typing import Tuple, Dict, Any
 import logging
@@ -39,7 +40,7 @@ class FallbackStrategy:
             'mysql.com'
         ]
 
-        # Websites that definitely need JS
+        # Websites that definitely need JS - INCLUDING HACKER NEWS
         self.js_required_domains = [
             'vercel.com',
             'nextjs.org',
@@ -53,8 +54,11 @@ class FallbackStrategy:
             'figma.com',
             'notion.so',
             'airtable.com',
-            'news.ycombinator.com',  # Force JS for Hacker News
-            'hacker-news.com'        # (rarely used)
+            'news.ycombinator.com',  # FORCE JS FOR HACKER NEWS - CRITICAL FOR STAGE 4
+            'hacker-news.com',       # (rarely used)
+            'dev.to',                # Load more buttons
+            'mui.com',               # Tabs
+            'infinite-scroll.com'    # Infinite scroll demo
         ]
 
         # Patterns that suggest JS-rendered content
@@ -100,7 +104,7 @@ class FallbackStrategy:
                 # Even if it fails, don't try JS for known static sites
                 raise
 
-        # Step 2: Check if domain definitely needs JS
+        # Step 2: Check if domain definitely needs JS - HACKER NEWS GOES HERE
         if self._requires_javascript_by_domain(domain):
             logger.info(f"Domain {domain} requires JavaScript - using Playwright")
             try:
@@ -108,7 +112,14 @@ class FallbackStrategy:
                 return 'js', result.dict()
             except Exception as e:
                 logger.error(f"JS scraping failed for JS site: {e}")
-                raise
+                # Try static as emergency fallback
+                try:
+                    logger.warning(f"JS failed, trying static fallback for {domain}")
+                    result = await self.static_scraper.scrape(url)
+                    return 'static_fallback', result.dict()
+                except Exception as static_error:
+                    logger.error(f"Static fallback also failed: {static_error}")
+                    raise
 
         # Step 3: Try static first (default strategy)
         try:
@@ -152,7 +163,28 @@ class FallbackStrategy:
                 return 'js', js_result.dict()
             except Exception as js_error:
                 logger.error(f"Both static and JS scraping failed: {js_error}")
-                raise
+                # Create minimal error result
+                error_data = {
+                    "url": url,
+                    "scrapedAt": datetime.utcnow().isoformat() + "Z",
+                    "meta": {
+                        "title": "",
+                        "description": "",
+                        "language": "en",
+                        "canonical": None
+                    },
+                    "sections": [],
+                    "interactions": {
+                        "clicks": [],
+                        "scrolls": 0,
+                        "pages": [url],
+                        "totalDepth": 0
+                    },
+                    "errors": [
+                        {"message": str(js_error), "phase": "fallback_error"}
+                    ]
+                }
+                return 'error', error_data
 
     def _is_known_static_domain(self, domain: str) -> bool:
         """Check if domain is known to be static"""
@@ -162,10 +194,12 @@ class FallbackStrategy:
         return False
 
     def _requires_javascript_by_domain(self, domain: str) -> bool:
-        """Check if domain is known to require JS"""
+        """Check if domain is known to require JS - HACKER NEWS MUST RETURN TRUE"""
         for js_domain in self.js_required_domains:
             if js_domain in domain:
+                logger.info(f"Domain {domain} matched JS domain: {js_domain}")
                 return True
+        logger.info(f"Domain {domain} not in JS required domains")
         return False
 
     def _get_playwright_scraper(self):
